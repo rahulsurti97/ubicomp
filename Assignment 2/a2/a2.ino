@@ -1,5 +1,6 @@
-
-// Basic demo for accelerometer readings from Adafruit LIS3DH
+#include "config.h"
+#include <WiFi.h>
+#include <HTTPClient.h>
 
 #include <Wire.h>
 #include <SPI.h>
@@ -57,9 +58,23 @@ static const unsigned char PROGMEM logo_bmp[] =
 const int BATTERY_PIN = A13;
 const int MAX_ANALOG_VAL = 4095;
 const float MAX_BATTERY_VOLTAGE = 4.2; // Max LiPoly voltage of a 3.7 battery is 4.2
+const float MIN_BATTERY_VOLTAGE = 3.2; // MIN LiPoly voltage of a 3.7 battery is 3.2
+
+const int SERIAL_BAUD_RATE = 115200; // make sure this matches the value in AccelRecorder.pde
+
+const int numAccReadings = 5; // Number of readings to average
+float x_data[numAccReadings]; // Array to store accelerometer data
+float y_data[numAccReadings]; // Array to store accelerometer data
+float z_data[numAccReadings]; // Array to store accelerometer data
+int accIndex = 0; // Index for storing the latest reading
+
+const unsigned long DISPLAY_INTERVAL = 500;
+unsigned long t_last_display_time = 0;
+const unsigned long WIFI_DATA_INTERVAL = 1000;
+unsigned long t_last_wifi_data_time = 0;
 
 void setup(void) {
-  Serial.begin(9600);
+  Serial.begin(SERIAL_BAUD_RATE);
   while (!Serial) delay(10);     // will pause Zero, Leonardo, etc until serial console opens
 
   pinMode(BATTERY_PIN, INPUT);
@@ -106,47 +121,54 @@ void setup(void) {
 
   // Clear the buffer
   display.clearDisplay();
+
+  connectToWifi();
 }
 
 void loop() {
+  unsigned long currentTime = millis();
+
   sensors_event_t event;
-  readEvent(&event);
-  displayAccReading(&event);
-  delay(500);
+  String accData = readAccEvent(&event); 
+
+  if(currentTime - t_last_display_time > DISPLAY_INTERVAL) {
+    // Serial.println(accData);
+    display.clearDisplay();
+    writeAccToDisplay(&event);
+    writeBatteryToDisplay();
+    display.display();
+    t_last_display_time = currentTime;
+  }
+
+  if(currentTime - t_last_wifi_data_time > WIFI_DATA_INTERVAL) {
+    sendDataOverWifi(accData);
+    t_last_wifi_data_time = currentTime;
+  }
 }
 
-void readEvent(sensors_event_t *event){
-  lis.read();      // get X Y and Z data at once
+String readAccEvent(sensors_event_t *event){
+  lis.read();
   lis.getEvent(event);
-
-  /* Display the results (acceleration is measured in m/s^2) */
-  Serial.print("x:");
-  Serial.println(event->acceleration.x);
-  Serial.print("y:");
-  Serial.println(event->acceleration.y);
-  Serial.print("z:");
-  Serial.println(event->acceleration.z);
+  return (String)millis() + ", " + lis.x + ", " + lis.y + ", " + lis.z + ", " + event->acceleration.x + ", " + event->acceleration.y + ", " + event->acceleration.z;
 }
 
-void displayAccReading(sensors_event_t *event) {
-  display.clearDisplay();
+void writeAccToDisplay(sensors_event_t *event){
   display.setTextSize(1);
-  display.setCursor(0, 0);     // Start at top-left corner
+  display.setCursor(0, 0);
   display.setTextColor(SSD1306_WHITE);
 
   display.println((String)"X:" + event->acceleration.x + "m/s^2");
   display.println((String)"Y:" + event->acceleration.y + "m/s^2");
   display.println((String)"Z:" + event->acceleration.z + "m/s^2");
+}
 
+void writeBatteryToDisplay(){
   int rawValue = analogRead(BATTERY_PIN); // Read raw ADC value
-  // Reference voltage on ESP32 is 1.1V
-  // https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/adc.html#adc-calibration
-  // See also: https://bit.ly/2zFzfMT
   float voltageLevel = (rawValue / 4095.0) * 2 * 1.1 * 3.3; // calculate voltage level
-  float batteryFraction = voltageLevel / MAX_BATTERY_VOLTAGE;
+  float batteryPercentage = calculateBatteryPercentage(voltageLevel);
 
-  //battery text
-  String percent = (String)(batteryFraction * 100) + "%";
+  // Write battery text
+  String percent = (String)batteryPercentage + "%";
   int16_t x, y;
   uint16_t w, h;
   display.getTextBounds(percent, 0, 0, &x, &y, &w, &h);
@@ -157,6 +179,51 @@ void displayAccReading(sensors_event_t *event) {
   display.getTextBounds(text, 0, 0, &x, &y, &w, &h);
   display.setCursor(SCREEN_WIDTH - w, h);
   display.println(text);
+}
 
-  display.display();
+int calculateBatteryPercentage(float voltage) {
+  if (voltage <= MIN_BATTERY_VOLTAGE) {
+    return 0;
+  } else if (voltage >= MAX_BATTERY_VOLTAGE) {
+    return 100;
+  } else {
+    return map(voltage, MIN_BATTERY_VOLTAGE, MAX_BATTERY_VOLTAGE, 0, 100);
+  }
+}
+
+void sendDataOverWifi(String data) {
+  connectToWifi();
+
+  HTTPClient http;
+
+  // Start HTTP POST request
+  http.begin(SERVER_ADDRESS);
+  http.addHeader("Content-Type", "text/plain");
+
+  // Send data
+  int httpResponseCode = http.POST(data);
+
+  if (httpResponseCode > 0) {
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+  } else {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+
+  // Free resources
+  http.end();
+}
+
+void connectToWifi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Reconnected to WiFi");
 }
