@@ -5,10 +5,10 @@ app = Flask(__name__)
 
 formatted_time = datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
-filepath = "Logs/received_data_" + formatted_time+ ".txt"
+filepath = "Logs/received_data_" + formatted_time+ ".csv"
 
 with open(filepath, "a") as file:  
-    file.write("timestamp,accel_x,accel_y,accel_z,magnitude" + "\n")
+    file.write("timestamp,magnitude" + "\n")
 
 @app.route('/data', methods=['POST'])
 def receive_data():

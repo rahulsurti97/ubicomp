@@ -63,16 +63,18 @@ const float MIN_BATTERY_VOLTAGE = 3.2; // MIN LiPoly voltage of a 3.7 battery is
 const int SERIAL_BAUD_RATE = 115200; // make sure this matches the value in AccelRecorder.pde
 
 const int numAccReadings = 5; // Number of readings to average
-float x_data[numAccReadings]; // Array to store accelerometer data
-float y_data[numAccReadings]; // Array to store accelerometer data
-float z_data[numAccReadings]; // Array to store accelerometer data
-float mag_data[numAccReadings]; // Array to store accelerometer data
-float accXYZSum[3]; // x,y,z sum values
+float mag_data[numAccReadings]; // Array to store accelerometer magnitude data for smoothing
+float magnitudeSum = 0;
 int accIndex = 0; // Index for storing the latest reading
+
+const int stepDetectionWindow = 20; //store 20 samples, loop delay is 50ms, so window is 1 second worth of data
+float step_data[stepDetectionWindow]; // Array to store accelerometer magnitude data for step detection
+int stepIndex = 0;
+int totalSteps = 0;
 
 const unsigned long DISPLAY_INTERVAL = 500;
 unsigned long t_last_display_time = 0;
-const unsigned long WIFI_DATA_INTERVAL = 500;
+const unsigned long WIFI_DATA_INTERVAL = 250;
 unsigned long t_last_wifi_data_time = 0;
 
 void setup(void) {
@@ -116,6 +118,16 @@ void setup(void) {
     for(;;); // Don't proceed, loop forever
   }
 
+  for(int i = 0; i < numAccReadings; i++) {
+    mag_data[i] = 0;
+  }
+
+  for(int i = 0; i < stepDetectionWindow; i++) {
+    step_data[i] = 0;
+  }
+
+  totalSteps = 0;
+
   // Show initial display buffer contents on the screen --
   // the library initializes this with an Adafruit splash screen.
   display.display();
@@ -131,42 +143,79 @@ void loop() {
   unsigned long currentTime = millis();
 
   sensors_event_t event;
-  String accData = readAccEvent(&event); 
+  float currentMagnitude = getSmoothedMagnitude(&event); 
+
+  int stepCount = detectStep(currentMagnitude);
+  totalSteps += stepCount;
 
   if(currentTime - t_last_display_time > DISPLAY_INTERVAL) {
-    Serial.println(accData);
     display.clearDisplay();
     writeAccToDisplay(&event);
     writeBatteryToDisplay();
+    writeStepCountToDisplay();
     display.display();
     t_last_display_time = currentTime;
   }
 
-  if(currentTime - t_last_wifi_data_time > WIFI_DATA_INTERVAL) {
-    sendDataOverWifi(accData);
+  if(currentTime - t_last_wifi_data_time > WIFI_DATA_INTERVAL && stepCount > 0) {
+    sendDataOverWifi((String)currentTime + "," + totalSteps);
     t_last_wifi_data_time = currentTime;
   }
+
+  delay(50); // record ~20 samples/second 
 }
 
-String readAccEvent(sensors_event_t *event){
+int detectStep(float mag) {
+  Serial.println(mag);
+  step_data[stepIndex] = mag;
+  stepIndex++;
+
+  if(stepIndex < stepDetectionWindow) {
+    return 0;
+  }
+
+  // Buffer is full, start processing
+  stepIndex = 0;
+
+  int peakCount = 0;
+  float peakAccumulate = 0;
+  float backwardSlope = 0;
+  float forwardSlope = 0;
+  for(int i = 1; i < stepDetectionWindow - 1; i++) {
+    backwardSlope = step_data[i] - step_data[i-1];
+    forwardSlope = step_data[i+1] - step_data[i];
+    if(forwardSlope < 0 && backwardSlope > 0) {
+      peakCount += 1;
+      peakAccumulate += step_data[i];
+    }
+  }
+  float peakMean = peakAccumulate/peakCount;
+
+  int stepCount = 0;
+  for(int i = 1; i < stepDetectionWindow - 1; i++){
+    backwardSlope = step_data[i] - step_data[i-1];
+    forwardSlope = step_data[i+1] - step_data[i];
+    if(forwardSlope < 0 && backwardSlope > 0 && 
+       step_data[i] > 0.6 * peakMean && step_data[0] > 10) {
+        stepCount += 1;
+    }
+  }
+
+  return min(stepCount, 3); //no more than 3 steps/second
+}
+
+float getSmoothedMagnitude(sensors_event_t *event){
   lis.read();
   lis.getEvent(event);
 
-  accXYZSum[0] = accXYZSum[0] - x_data[accIndex] + event->acceleration.x;
-  accXYZSum[1] = accXYZSum[1] - y_data[accIndex] + event->acceleration.y;
-  accXYZSum[2] = accXYZSum[2] - z_data[accIndex] + event->acceleration.z;
-  x_data[accIndex] = event->acceleration.x;
-  y_data[accIndex] = event->acceleration.y;
-  z_data[accIndex] = event->acceleration.z;
+  float currentMagnitude = sqrt(event->acceleration.x * event->acceleration.x + 
+                                event->acceleration.y * event->acceleration.y + 
+                                event->acceleration.z * event->acceleration.z);
 
-  float x_avg = accXYZSum[0] / numAccReadings;
-  float y_avg = accXYZSum[1] / numAccReadings;
-  float z_avg = accXYZSum[2] / numAccReadings;
-  float magnitude = sqrt(x_avg * x_avg + y_avg * y_avg + z_avg * z_avg);
-
+  magnitudeSum = magnitudeSum - mag_data[accIndex] + currentMagnitude;
+  mag_data[accIndex] = currentMagnitude;
   accIndex = (accIndex + 1) % numAccReadings;
-
-  return (String)millis() + ", " + x_avg + ", " + y_avg + ", " + z_avg + ", " + magnitude;
+  return magnitudeSum / numAccReadings; // return avg magnitude
 }
 
 void writeAccToDisplay(sensors_event_t *event){
@@ -196,6 +245,13 @@ void writeBatteryToDisplay(){
   display.getTextBounds(text, 0, 0, &x, &y, &w, &h);
   display.setCursor(SCREEN_WIDTH - w, h);
   display.println(text);
+}
+
+void writeStepCountToDisplay(){
+  display.setTextSize(1);
+  display.setCursor(0, 24);
+  display.setTextColor(SSD1306_WHITE);
+  display.println((String)"Step Count:" + totalSteps);
 }
 
 int calculateBatteryPercentage(float voltage) {
