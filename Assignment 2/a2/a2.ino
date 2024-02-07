@@ -66,11 +66,13 @@ const int numAccReadings = 5; // Number of readings to average
 float x_data[numAccReadings]; // Array to store accelerometer data
 float y_data[numAccReadings]; // Array to store accelerometer data
 float z_data[numAccReadings]; // Array to store accelerometer data
+float mag_data[numAccReadings]; // Array to store accelerometer data
+float accXYZSum[3]; // x,y,z sum values
 int accIndex = 0; // Index for storing the latest reading
 
 const unsigned long DISPLAY_INTERVAL = 500;
 unsigned long t_last_display_time = 0;
-const unsigned long WIFI_DATA_INTERVAL = 1000;
+const unsigned long WIFI_DATA_INTERVAL = 500;
 unsigned long t_last_wifi_data_time = 0;
 
 void setup(void) {
@@ -87,7 +89,7 @@ void setup(void) {
   }
   Serial.println("LIS3DH found!");
 
-  lis.setRange(LIS3DH_RANGE_8_G);   // 2, 4, 8 or 16 G!
+  lis.setRange(LIS3DH_RANGE_2_G);   // 2, 4, 8 or 16 G!
 
   Serial.print("Range = "); Serial.print(2 << lis.getRange());
   Serial.println("G");
@@ -132,7 +134,7 @@ void loop() {
   String accData = readAccEvent(&event); 
 
   if(currentTime - t_last_display_time > DISPLAY_INTERVAL) {
-    // Serial.println(accData);
+    Serial.println(accData);
     display.clearDisplay();
     writeAccToDisplay(&event);
     writeBatteryToDisplay();
@@ -149,7 +151,22 @@ void loop() {
 String readAccEvent(sensors_event_t *event){
   lis.read();
   lis.getEvent(event);
-  return (String)millis() + ", " + lis.x + ", " + lis.y + ", " + lis.z + ", " + event->acceleration.x + ", " + event->acceleration.y + ", " + event->acceleration.z;
+
+  accXYZSum[0] = accXYZSum[0] - x_data[accIndex] + event->acceleration.x;
+  accXYZSum[1] = accXYZSum[1] - y_data[accIndex] + event->acceleration.y;
+  accXYZSum[2] = accXYZSum[2] - z_data[accIndex] + event->acceleration.z;
+  x_data[accIndex] = event->acceleration.x;
+  y_data[accIndex] = event->acceleration.y;
+  z_data[accIndex] = event->acceleration.z;
+
+  float x_avg = accXYZSum[0] / numAccReadings;
+  float y_avg = accXYZSum[1] / numAccReadings;
+  float z_avg = accXYZSum[2] / numAccReadings;
+  float magnitude = sqrt(x_avg * x_avg + y_avg * y_avg + z_avg * z_avg);
+
+  accIndex = (accIndex + 1) % numAccReadings;
+
+  return (String)millis() + ", " + x_avg + ", " + y_avg + ", " + z_avg + ", " + magnitude;
 }
 
 void writeAccToDisplay(sensors_event_t *event){

@@ -8,7 +8,7 @@ formatted_time = datetime.now().strftime("%Y-%m-%d_%H%M%S")
 filepath = "Logs/received_data_" + formatted_time+ ".txt"
 
 with open(filepath, "a") as file:  
-    file.write("timestamp,x_raw,y_raw,z_raw,accel_x,accel_y,accel_z" + "\n")
+    file.write("timestamp,accel_x,accel_y,accel_z,magnitude" + "\n")
 
 @app.route('/data', methods=['POST'])
 def receive_data():
