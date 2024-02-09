@@ -19,7 +19,7 @@ def get_sensor_data():
 @app.route('/data', methods=['POST'])
 def receive_data():
     data = request.data.decode('utf-8') 
-
+    print(data)
     # with open(filepath, "a") as file:  
     #     file.write(data + "\n")
     
@@ -33,4 +33,4 @@ def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=True)

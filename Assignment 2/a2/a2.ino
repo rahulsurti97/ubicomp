@@ -1,9 +1,5 @@
-// Custom server wifi connection
-// #include "config.h"
-// #include <WiFi.h>
-// #include <HTTPClient.h>
-
-#include "adafruitio.h"
+#include "customWifiServer.h"
+// #include "adafruitio.h"
 
 #include <Wire.h>
 #include <SPI.h>
@@ -142,22 +138,13 @@ void setup(void) {
   // Clear the buffer
   display.clearDisplay();
 
-  // Custom wifi server connection
-  // connectToWifi();
+#if defined(USING_WIFI_SERVER) 
+  connectToWifi();
+#endif
 
-  // // Connect to io.adafruit.com
-  Serial.print("Connecting to Adafruit IO");
-  io.connect();
-
-  // Wait for a connection
-  while(io.status() < AIO_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-  }
-
-    // We are connected
-  Serial.println();
-  Serial.println(io.statusText());
+#if defined(USING_ADAFRUIT_IO) 
+  connectToAdafruit();
+#endif
 }
 
 void loop() {
@@ -170,12 +157,17 @@ void loop() {
 
   updateDisplay(magnitude, stepCount);
 
-  // sendDataOverWifi((String)currentTime + "," + magnitude + "," + stepCount + "," + totalSteps);
   if(currentTime - t_last_wifi_data_time > WIFI_DATA_INTERVAL) {
-    _adafruitIoFeed->save(totalSteps);
     t_last_wifi_data_time = currentTime;
-  }
 
+#if defined(USING_WIFI_SERVER) 
+    sendDataOverWifi((String)currentTime + "," + totalSteps);
+#endif
+#if defined(USING_ADAFRUIT_IO) 
+    _adafruitIoFeed->save(totalSteps);
+#endif
+
+  }
   delay(20);
 }
 
@@ -324,40 +316,3 @@ int calculateBatteryPercentage(float voltage) {
     return map(voltage*100, MIN_BATTERY_VOLTAGE*100, MAX_BATTERY_VOLTAGE*100, 0, 100);
   }
 }
-
-// void sendDataOverWifi(String data) {
-//   connectToWifi();
-
-//   HTTPClient http;
-
-//   // Start HTTP POST request
-//   http.begin(SERVER_ADDRESS);
-//   http.addHeader("Content-Type", "text/plain");
-
-//   // Send data
-//   int httpResponseCode = http.POST(data);
-
-//   if (httpResponseCode > 0) {
-//     Serial.print("HTTP Response code: ");
-//     Serial.println(httpResponseCode);
-//   } else {
-//     Serial.print("Error code: ");
-//     Serial.println(httpResponseCode);
-//   }
-
-//   // Free resources
-//   http.end();
-// }
-
-// void connectToWifi() {
-//   if (WiFi.status() == WL_CONNECTED) {
-//     return;
-//   }
-
-//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-//   while (WiFi.status() != WL_CONNECTED) {
-//     delay(1000);
-//     Serial.println("Connecting to WiFi...");
-//   }
-//   Serial.println("Reconnected to WiFi");
-// }
