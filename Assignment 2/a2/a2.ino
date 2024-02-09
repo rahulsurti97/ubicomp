@@ -321,7 +321,7 @@ int calculateBatteryPercentage(float voltage) {
   } else if (voltage >= MAX_BATTERY_VOLTAGE) {
     return 100;
   } else {
-    return map(voltage, MIN_BATTERY_VOLTAGE, MAX_BATTERY_VOLTAGE, 0, 100);
+    return map(voltage*100, MIN_BATTERY_VOLTAGE*100, MAX_BATTERY_VOLTAGE*100, 0, 100);
   }
 }
 
