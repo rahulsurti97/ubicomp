@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Data</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Sensor Data Graph</h1>
+    <canvas id="sensorChart" width="400" height="200"></canvas>
+
+    <script>
+        // Function to fetch sensor data from Flask route and update the chart
+        function fetchSensorData() {
+            fetch('/sensor-data')
+                .then(response => response.json())
+                .then(data => {
+                    updateChart(data);
+                });
+        }
+
+        // Function to update the chart with new sensor data
+        function updateChart(data) {
+            const ctx = document.getElementById('sensorChart').getContext('2d');
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from(Array(data.length).keys()),
+                    datasets: [{
+                        label: 'Sensor Data',
+                        data: data,
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    scales: {
+                        yAxes: [{
+                            ticks: {
+                                beginAtZero: true
+                            }
+                        }]
+                    }
+                }
+            });
+        }
+
+        // Fetch sensor data initially and refresh every 2 seconds
+        fetchSensorData();
+        setInterval(fetchSensorData, 2000);
+    </script>
+</body>
+</html>

@@ -1,6 +1,9 @@
-#include "config.h"
-#include <WiFi.h>
-#include <HTTPClient.h>
+// Custom server wifi connection
+// #include "config.h"
+// #include <WiFi.h>
+// #include <HTTPClient.h>
+
+#include "adafruitio.h"
 
 #include <Wire.h>
 #include <SPI.h>
@@ -60,21 +63,24 @@ const int MAX_ANALOG_VAL = 4095;
 const float MAX_BATTERY_VOLTAGE = 4.2; // Max LiPoly voltage of a 3.7 battery is 4.2
 const float MIN_BATTERY_VOLTAGE = 3.2; // MIN LiPoly voltage of a 3.7 battery is 3.2
 
-const int SERIAL_BAUD_RATE = 115200; // make sure this matches the value in AccelRecorder.pde
+const int SERIAL_BAUD_RATE = 9600; // make sure this matches the value in AccelRecorder.pde
 
 const int numAccReadings = 5; // Number of readings to average
 float mag_data[numAccReadings]; // Array to store accelerometer magnitude data for smoothing
 float magnitudeSum = 0;
 int accIndex = 0; // Index for storing the latest reading
 
-const int stepDetectionWindow = 20; //store 20 samples, loop delay is 50ms, so window is 1 second worth of data
+const int stepDetectionWindow = 12;
 float step_data[stepDetectionWindow]; // Array to store accelerometer magnitude data for step detection
 int stepIndex = 0;
 int totalSteps = 0;
 
-const unsigned long DISPLAY_INTERVAL = 500;
-unsigned long t_last_display_time = 0;
-const unsigned long WIFI_DATA_INTERVAL = 250;
+const int displayBufferSize = 64;
+float displayMagBuffer[displayBufferSize];
+float displayStepBuffer[displayBufferSize];
+int displayDataCounter = 0;
+
+const unsigned long WIFI_DATA_INTERVAL = 1000;
 unsigned long t_last_wifi_data_time = 0;
 
 void setup(void) {
@@ -136,37 +142,91 @@ void setup(void) {
   // Clear the buffer
   display.clearDisplay();
 
-  connectToWifi();
+  // Custom wifi server connection
+  // connectToWifi();
+
+  // // Connect to io.adafruit.com
+  Serial.print("Connecting to Adafruit IO");
+  io.connect();
+
+  // Wait for a connection
+  while(io.status() < AIO_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+
+    // We are connected
+  Serial.println();
+  Serial.println(io.statusText());
 }
 
 void loop() {
   unsigned long currentTime = millis();
 
   sensors_event_t event;
-  float currentMagnitude = getSmoothedMagnitude(&event); 
-
-  int stepCount = detectStep(currentMagnitude);
+  float magnitude = getSmoothedMagnitude(&event); 
+  int stepCount = detectStep(magnitude);
   totalSteps += stepCount;
 
-  if(currentTime - t_last_display_time > DISPLAY_INTERVAL) {
-    display.clearDisplay();
-    writeAccToDisplay(&event);
-    writeBatteryToDisplay();
-    writeStepCountToDisplay();
-    display.display();
-    t_last_display_time = currentTime;
-  }
+  updateDisplay(magnitude, stepCount);
 
-  if(currentTime - t_last_wifi_data_time > WIFI_DATA_INTERVAL && stepCount > 0) {
-    sendDataOverWifi((String)currentTime + "," + totalSteps);
+  // sendDataOverWifi((String)currentTime + "," + magnitude + "," + stepCount + "," + totalSteps);
+  if(currentTime - t_last_wifi_data_time > WIFI_DATA_INTERVAL) {
+    _adafruitIoFeed->save(totalSteps);
     t_last_wifi_data_time = currentTime;
   }
 
-  delay(50); // record ~20 samples/second 
+  delay(20);
+}
+
+void updateDisplay(float magnitude, int stepCount) {
+  display.clearDisplay();
+
+  writeBatteryToDisplay();
+  writeStepCountToDisplay();
+
+  displayMagBuffer[displayDataCounter] = magnitude;
+  displayStepBuffer[displayDataCounter] = stepCount;
+  displayDataCounter = (displayDataCounter + 1) % displayBufferSize;
+
+  drawAccVectorGraph();
+  drawStepGraph();
+  int scanline = displayDataCounter * 2;
+  display.drawLine(scanline, 20, scanline, SCREEN_HEIGHT, SSD1306_WHITE);
+
+  display.display();  
+}
+
+void drawAccVectorGraph() {
+  float maxValue = -INFINITY;
+  float minValue = INFINITY;
+  for (int i = 0; i < displayBufferSize; i++) {
+    maxValue = max(maxValue, displayMagBuffer[i]);
+    minValue = min(minValue, displayMagBuffer[i]);
+  }
+
+  for (int i = 0; i < displayBufferSize - 1; i++) {
+    int x0 = map(i, 0, displayBufferSize - 1, 0, SCREEN_WIDTH);
+    int x1 = map(i + 1, 0, displayBufferSize - 1, 0, SCREEN_WIDTH);
+    int y0 = map(displayMagBuffer[i], 0, maxValue, SCREEN_HEIGHT-20, 20);
+    int y1 = map(displayMagBuffer[i + 1], 0, maxValue, SCREEN_HEIGHT-20, 20);
+
+    display.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+  }
+}
+
+void drawStepGraph() {
+  for (int i = 0; i < displayBufferSize - 1; i++) {
+    int x0 = map(i, 0, displayBufferSize - 1, 0, SCREEN_WIDTH);
+    int x1 = map(i + 1, 0, displayBufferSize - 1, 0, SCREEN_WIDTH);
+    int y0 = map(min(displayStepBuffer[i], 1.0f), 0, 1, SCREEN_HEIGHT, SCREEN_HEIGHT-20);
+    int y1 = map(min(displayStepBuffer[i + 1], 1.0f), 0, 1, SCREEN_HEIGHT, SCREEN_HEIGHT-20);
+
+    display.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+  }
 }
 
 int detectStep(float mag) {
-  Serial.println(mag);
   step_data[stepIndex] = mag;
   stepIndex++;
 
@@ -189,6 +249,7 @@ int detectStep(float mag) {
       peakAccumulate += step_data[i];
     }
   }
+
   float peakMean = peakAccumulate/peakCount;
 
   int stepCount = 0;
@@ -196,24 +257,24 @@ int detectStep(float mag) {
     backwardSlope = step_data[i] - step_data[i-1];
     forwardSlope = step_data[i+1] - step_data[i];
     if(forwardSlope < 0 && backwardSlope > 0 && 
-       step_data[i] > 0.6 * peakMean && step_data[0] > 10) {
+       step_data[i] > 0.6 * peakMean && step_data[i] > 11) {
         stepCount += 1;
     }
   }
 
-  return min(stepCount, 3); //no more than 3 steps/second
+  return stepCount;
 }
 
 float getSmoothedMagnitude(sensors_event_t *event){
   lis.read();
   lis.getEvent(event);
 
-  float currentMagnitude = sqrt(event->acceleration.x * event->acceleration.x + 
+  float magnitude = sqrt(event->acceleration.x * event->acceleration.x + 
                                 event->acceleration.y * event->acceleration.y + 
                                 event->acceleration.z * event->acceleration.z);
 
-  magnitudeSum = magnitudeSum - mag_data[accIndex] + currentMagnitude;
-  mag_data[accIndex] = currentMagnitude;
+  magnitudeSum = magnitudeSum - mag_data[accIndex] + magnitude;
+  mag_data[accIndex] = magnitude;
   accIndex = (accIndex + 1) % numAccReadings;
   return magnitudeSum / numAccReadings; // return avg magnitude
 }
@@ -249,7 +310,7 @@ void writeBatteryToDisplay(){
 
 void writeStepCountToDisplay(){
   display.setTextSize(1);
-  display.setCursor(0, 24);
+  display.setCursor(0, 0);
   display.setTextColor(SSD1306_WHITE);
   display.println((String)"Step Count:" + totalSteps);
 }
@@ -264,39 +325,39 @@ int calculateBatteryPercentage(float voltage) {
   }
 }
 
-void sendDataOverWifi(String data) {
-  connectToWifi();
+// void sendDataOverWifi(String data) {
+//   connectToWifi();
 
-  HTTPClient http;
+//   HTTPClient http;
 
-  // Start HTTP POST request
-  http.begin(SERVER_ADDRESS);
-  http.addHeader("Content-Type", "text/plain");
+//   // Start HTTP POST request
+//   http.begin(SERVER_ADDRESS);
+//   http.addHeader("Content-Type", "text/plain");
 
-  // Send data
-  int httpResponseCode = http.POST(data);
+//   // Send data
+//   int httpResponseCode = http.POST(data);
 
-  if (httpResponseCode > 0) {
-    Serial.print("HTTP Response code: ");
-    Serial.println(httpResponseCode);
-  } else {
-    Serial.print("Error code: ");
-    Serial.println(httpResponseCode);
-  }
+//   if (httpResponseCode > 0) {
+//     Serial.print("HTTP Response code: ");
+//     Serial.println(httpResponseCode);
+//   } else {
+//     Serial.print("Error code: ");
+//     Serial.println(httpResponseCode);
+//   }
 
-  // Free resources
-  http.end();
-}
+//   // Free resources
+//   http.end();
+// }
 
-void connectToWifi() {
-  if (WiFi.status() == WL_CONNECTED) {
-    return;
-  }
+// void connectToWifi() {
+//   if (WiFi.status() == WL_CONNECTED) {
+//     return;
+//   }
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
-  }
-  Serial.println("Reconnected to WiFi");
-}
+//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//   while (WiFi.status() != WL_CONNECTED) {
+//     delay(1000);
+//     Serial.println("Connecting to WiFi...");
+//   }
+//   Serial.println("Reconnected to WiFi");
+// }
