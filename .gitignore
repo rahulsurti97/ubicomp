@@ -3,5 +3,6 @@
 *Logs/
 *.ipynb_checkpoints/
 *adafruitio.h
-Assignment 3/signals*
 Assignment 3/GestureLogs*
+.virtual_documents/
+Assignment 3/signals*
